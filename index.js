@@ -61,8 +61,62 @@ async function run() {
       }
     });
 
+    app.post("/allCrops/:id/interests", async (req, res) => {
+      try {
+        const cropId = req.params.id;
+        const { userEmail, userName, quantity, message } = req.body;
 
-    
+        if (!userEmail || !userName || !quantity) {
+          return res.status(400).send({ message: "Missing required fields." });
+        }
+
+        const cropObjectId = new ObjectId(cropId);
+
+        const existingInterest = await cropsCollection.findOne({
+          _id: cropObjectId,
+          "interests.userEmail": userEmail,
+        });
+
+        if (existingInterest) {
+          return res
+            .status(400)
+            .send({
+              message: "You’ve already sent an interest for this crop.",
+            });
+        }
+
+        const interestId = new ObjectId();
+        const newInterest = {
+          _id: interestId,
+          cropId: cropId,
+          userEmail,
+          userName,
+          quantity,
+          message,
+          status: "pending",
+          createdAt: new Date(),
+        };
+
+        const result = await cropsCollection.updateOne(
+          { _id: cropObjectId },
+          { $push: { interests: newInterest } }
+        );
+
+        if (result.modifiedCount > 0) {
+          res.send({
+            success: true,
+            message: "Interest submitted successfully!",
+            interest: newInterest,
+          });
+        } else {
+          res.status(404).send({ message: "Crop not found." });
+        }
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Server error." });
+      }
+    });
+
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
     console.log(
