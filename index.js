@@ -38,7 +38,7 @@ async function run() {
 
     app.get("/allCrops", async (req, res) => {
       const cursor = cropsCollection.find();
-      const result = await cursor.sort({ pricePerUnit: 1 }).toArray();
+      const result = await cursor.sort({ pricePerUnit: -1 }).toArray();
       res.send(result);
     });
 
@@ -78,11 +78,9 @@ async function run() {
         });
 
         if (existingInterest) {
-          return res
-            .status(400)
-            .send({
-              message: "You’ve already sent an interest for this crop.",
-            });
+          return res.status(400).send({
+            message: "You’ve already sent an interest for this crop.",
+          });
         }
 
         const interestId = new ObjectId();
@@ -114,6 +112,25 @@ async function run() {
       } catch (error) {
         console.error(error);
         res.status(500).send({ message: "Server error." });
+      }
+    });
+
+    app.post("/allCrops", async (req, res) => {
+      try {
+        const cropData = req.body;
+
+        cropData.interests = [];
+
+        const result = await cropsCollection.insertOne(cropData);
+
+        res.status(201).json({
+          success: true,
+          message: "Crop added successfully",
+          cropId: result.insertedId,
+        });
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ success: false, message: "Server error" });
       }
     });
 
