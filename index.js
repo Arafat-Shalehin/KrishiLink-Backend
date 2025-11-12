@@ -284,6 +284,39 @@ async function run() {
       }
     });
 
+    // Interest Status handle
+    app.patch("/updateInterestStatus/:cropId/:interestId", async (req, res) => {
+      const { cropId, interestId } = req.params;
+      const { status } = req.body;
+
+      try {
+        const result = await cropsCollection.updateOne(
+          {
+            _id: new ObjectId(cropId),
+            "interests._id": new ObjectId(interestId),
+          },
+          { $set: { "interests.$.status": status } }
+        );
+
+        if (result.modifiedCount === 0) {
+          return res
+            .status(404)
+            .json({
+              success: false,
+              message: "Interest not found or not updated",
+            });
+        }
+
+        res.status(200).json({
+          success: true,
+          message: `Interest status updated to ${status}`,
+        });
+      } catch (error) {
+        console.error("Update interest error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+      }
+    });
+
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
     console.log(
