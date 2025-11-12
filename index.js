@@ -64,7 +64,62 @@ async function run() {
       }
     });
 
-    // My Crops all sides:
+    // Interest wise Apis
+    app.post("/allCrops/:id/interests", async (req, res) => {
+      try {
+        const cropId = req.params.id;
+        const { userEmail, userName, quantity, message } = req.body;
+
+        if (!userEmail || !userName || !quantity) {
+          return res.status(400).send({ message: "Missing required fields." });
+        }
+
+        const cropObjectId = new ObjectId(cropId);
+
+        const existingInterest = await cropsCollection.findOne({
+          _id: cropObjectId,
+          "interests.userEmail": userEmail,
+        });
+
+        if (existingInterest) {
+          return res.status(400).send({
+            message: "You’ve already sent an interest for this crop.",
+          });
+        }
+
+        const interestId = new ObjectId();
+        const newInterest = {
+          _id: interestId,
+          cropId: cropId,
+          userEmail,
+          userName,
+          quantity,
+          message,
+          status: "pending",
+          createdAt: new Date(),
+        };
+
+        const result = await cropsCollection.updateOne(
+          { _id: cropObjectId },
+          { $push: { interests: newInterest } }
+        );
+
+        if (result.modifiedCount > 0) {
+          res.send({
+            success: true,
+            message: "Interest submitted successfully!",
+            interest: newInterest,
+          });
+        } else {
+          res.status(404).send({ message: "Crop not found." });
+        }
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Server error." });
+      }
+    });
+
+    // My Crops all parts:
     app.get("/myCrops", async (req, res) => {
       try {
         const { email } = req.query;
@@ -164,61 +219,6 @@ async function run() {
       }
     });
 
-    // Interest wise Apis
-    app.post("/allCrops/:id/interests", async (req, res) => {
-      try {
-        const cropId = req.params.id;
-        const { userEmail, userName, quantity, message } = req.body;
-
-        if (!userEmail || !userName || !quantity) {
-          return res.status(400).send({ message: "Missing required fields." });
-        }
-
-        const cropObjectId = new ObjectId(cropId);
-
-        const existingInterest = await cropsCollection.findOne({
-          _id: cropObjectId,
-          "interests.userEmail": userEmail,
-        });
-
-        if (existingInterest) {
-          return res.status(400).send({
-            message: "You’ve already sent an interest for this crop.",
-          });
-        }
-
-        const interestId = new ObjectId();
-        const newInterest = {
-          _id: interestId,
-          cropId: cropId,
-          userEmail,
-          userName,
-          quantity,
-          message,
-          status: "pending",
-          createdAt: new Date(),
-        };
-
-        const result = await cropsCollection.updateOne(
-          { _id: cropObjectId },
-          { $push: { interests: newInterest } }
-        );
-
-        if (result.modifiedCount > 0) {
-          res.send({
-            success: true,
-            message: "Interest submitted successfully!",
-            interest: newInterest,
-          });
-        } else {
-          res.status(404).send({ message: "Crop not found." });
-        }
-      } catch (error) {
-        console.error(error);
-        res.status(500).send({ message: "Server error." });
-      }
-    });
-
     // Making new crops Apis
     app.post("/allCrops", async (req, res) => {
       try {
@@ -235,6 +235,51 @@ async function run() {
         });
       } catch (error) {
         console.error(error);
+        res.status(500).json({ success: false, message: "Server error" });
+      }
+    });
+
+    // My interest Crops
+    app.get("/myInterests", async (req, res) => {
+      try {
+        const userEmail = req.query.email;
+        if (!userEmail) {
+          return res
+            .status(400)
+            .json({ success: false, message: "Email required" });
+        }
+
+        const allCrops = await cropsCollection.find().toArray();
+
+        const userInterests = [];
+
+        allCrops.forEach((crop) => {
+          if (Array.isArray(crop.interests)) {
+            crop.interests.forEach((interest) => {
+              if (interest.userEmail === userEmail) {
+                userInterests.push({
+                  _id: interest._id,
+                  cropId: crop._id,
+                  cropName: crop.name,
+                  cropType: crop.type,
+                  cropImage: crop.image,
+                  cropLocation: crop.location,
+                  ownerName: crop.owner?.ownerName || "Unknown",
+                  quantity: interest.quantity,
+                  message: interest.message,
+                  status: interest.status,
+                });
+              }
+            });
+          }
+        });
+
+        res.status(200).json({
+          success: true,
+          interests: userInterests,
+        });
+      } catch (error) {
+        console.error("Error fetching user interests:", error);
         res.status(500).json({ success: false, message: "Server error" });
       }
     });
