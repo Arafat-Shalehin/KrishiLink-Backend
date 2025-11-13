@@ -3,7 +3,7 @@
 ```md
 # 🌾 KrishiLink Server (Backend API)
 
-### Live API URL: [https://KrishiLink-server.vercel.app](https://KrishiLink-server.vercel.app)
+### Live API URL: [https://krishi-link-backend.vercel.app/](https://krishi-link-backend.vercel.app/)
 
 This is the backend service for **KrishiLink**, built using **Node.js**, **Express**, and **MongoDB**.  
 It handles all API operations including crop management, user interests, and secure data updates.
