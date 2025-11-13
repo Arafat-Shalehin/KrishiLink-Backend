@@ -249,7 +249,10 @@ async function run() {
             .json({ success: false, message: "Email required" });
         }
 
-        const allCrops = await cropsCollection.find().toArray();
+        const allCrops = await cropsCollection
+          .find()
+          .sort({ quantity: 1 })
+          .toArray();
 
         const userInterests = [];
 
@@ -290,26 +293,66 @@ async function run() {
       const { status } = req.body;
 
       try {
-        const result = await cropsCollection.updateOne(
-          {
-            _id: new ObjectId(cropId),
-            "interests._id": new ObjectId(interestId),
-          },
-          { $set: { "interests.$.status": status } }
-        );
-
-        if (result.modifiedCount === 0) {
+        const crop = await cropsCollection.findOne({
+          _id: new ObjectId(cropId),
+        });
+        if (!crop) {
           return res
             .status(404)
-            .json({
-              success: false,
-              message: "Interest not found or not updated",
-            });
+            .json({ success: false, message: "Crop not found" });
+        }
+
+        const interest = crop.interests.find(
+          (i) => i._id.toString() === interestId
+        );
+        if (!interest) {
+          return res
+            .status(404)
+            .json({ success: false, message: "Interest not found" });
+        }
+
+        let newQuantity = crop.quantity;
+
+        if (status === "accepted") {
+          const interestQty = parseInt(interest.quantity);
+          newQuantity = Math.max(0, crop.quantity - interestQty);
+
+          await cropsCollection.updateOne(
+            {
+              _id: new ObjectId(cropId),
+              "interests._id": new ObjectId(interestId),
+            },
+            {
+              $set: {
+                quantity: newQuantity,
+                "interests.$.status": status,
+              },
+            }
+          );
+        } else {
+          await cropsCollection.updateOne(
+            {
+              _id: new ObjectId(cropId),
+              "interests._id": new ObjectId(interestId),
+            },
+            {
+              $set: {
+                "interests.$.status": status,
+              },
+            }
+          );
         }
 
         res.status(200).json({
           success: true,
-          message: `Interest status updated to ${status}`,
+          message:
+            status === "accepted"
+              ? `Interest accepted and quantity reduced to ${newQuantity}`
+              : "Interest status updated",
+          newQuantity,
+          cropId,
+          interestId,
+          status,
         });
       } catch (error) {
         console.error("Update interest error:", error);
