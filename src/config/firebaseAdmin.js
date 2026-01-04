@@ -5,34 +5,20 @@ let initialized = false;
 function initFirebaseAdmin() {
   if (initialized) return admin;
 
-  const projectId = process.env.FIREBASE_PROJECT_ID;
-  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-  const privateKey = process.env.FIREBASE_PRIVATE_KEY
-    ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n")
-    : undefined;
-
-  // If you don't use Firebase Admin yet, you can keep this file for later.
-  if (projectId && clientEmail && privateKey) {
-    admin.initializeApp({
-      credential: admin.credential.cert({
-        projectId,
-        clientEmail,
-        privateKey,
-      }),
-    });
-    initialized = true;
-    return admin;
+  const base64 = process.env.FB_SERVICE_KEY;
+  if (!base64) {
+    throw new Error("FB_SERVICE_KEY is missing in environment variables.");
   }
 
-  // Fallback: initialize with default credentials if available
-  // (Useful in some hosted environments)
-  try {
-    admin.initializeApp();
-    initialized = true;
-  } catch (e) {
-    // Not initialized — that’s okay if you’re not using token verification yet.
-  }
+  // Decode JSON from base64
+  const decoded = Buffer.from(base64, "base64").toString("utf8");
+  const serviceAccount = JSON.parse(decoded);
 
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+  });
+
+  initialized = true;
   return admin;
 }
 

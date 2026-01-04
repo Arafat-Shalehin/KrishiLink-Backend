@@ -4,22 +4,17 @@ module.exports = async function verifyFirebaseToken(req, res, next) {
   try {
     const authHeader = req.headers.authorization || "";
     const token = authHeader.startsWith("Bearer ")
-      ? authHeader.split("Bearer ")[1]
+      ? authHeader.slice("Bearer ".length)
       : null;
 
-    if (!token)
+    if (!token) {
       return res.status(401).json({ success: false, message: "Unauthorized" });
-
-    const admin = initFirebaseAdmin();
-    if (!admin?.auth) {
-      return res.status(500).json({
-        success: false,
-        message: "Firebase Admin not configured on server.",
-      });
     }
 
+    const admin = initFirebaseAdmin();
     const decoded = await admin.auth().verifyIdToken(token);
-    req.user = decoded; // decoded.email etc.
+
+    req.auth = decoded; // contains uid, email, etc.
     next();
   } catch (err) {
     return res.status(401).json({ success: false, message: "Invalid token" });
