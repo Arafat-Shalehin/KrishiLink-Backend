@@ -1,160 +1,227 @@
 const { ObjectId } = require("../../config/db");
 const { cropsCollection } = require("../crops/crop.model");
+const {
+  interestsCollection,
+  ensureInterestIndexes,
+} = require("./interest.model");
 
-// POST /allCrops/:id/interests
+// POST /allCrops/:id/interests  (buyer only)
 async function submitInterest(req, res) {
   try {
-    const cropId = req.params.id;
-    const { userEmail, userName, quantity, message } = req.body;
+    await ensureInterestIndexes();
 
-    if (!userEmail || !userName || !quantity) {
-      return res.status(400).send({ message: "Missing required fields." });
+    const cropIdStr = req.params.id;
+    const cropId = new ObjectId(cropIdStr);
+
+    const { quantity, message } = req.body;
+
+    const buyerUid = req.dbUser.uid;
+    const buyerId = req.dbUser._id;
+    const buyerEmail = req.dbUser.email;
+    const buyerName = req.dbUser.name || req.dbUser.email;
+
+    const qty = Number(quantity);
+    if (!qty || qty < 1) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Quantity must be at least 1." });
     }
 
-    const col = await cropsCollection();
-    const cropObjectId = new ObjectId(cropId);
+    const cropsCol = await cropsCollection();
+    const crop = await cropsCol.findOne({ _id: cropId });
 
-    const existingInterest = await col.findOne({
-      _id: cropObjectId,
-      "interests.userEmail": userEmail,
-    });
+    if (!crop) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Crop not found." });
+    }
 
-    if (existingInterest) {
-      return res.status(400).send({
-        message: "You’ve already sent an interest for this crop.",
+    // prevent interest on own crop
+    if (crop?.owner?.ownerEmail === buyerEmail) {
+      return res.status(403).json({
+        success: false,
+        message: "You cannot show interest on your own crop.",
       });
     }
 
-    const interestId = new ObjectId();
-    const newInterest = {
-      _id: interestId,
-      cropId: cropId,
-      userEmail,
-      userName,
-      quantity,
-      message,
+    const farmerEmail = crop?.owner?.ownerEmail || "";
+    const farmerName = crop?.owner?.ownerName || "Unknown";
+
+    const interestsCol = await interestsCollection();
+
+    const now = new Date();
+    const interestDoc = {
+      cropId, // ObjectId
+      buyerId, // ObjectId (from users collection)
+      buyerUid,
+      buyerEmail,
+      buyerName,
+
+      farmerEmail,
+      farmerName,
+
+      quantity: qty,
+      message: message || "",
       status: "pending",
-      createdAt: new Date(),
+
+      createdAt: now,
+      updatedAt: now,
     };
 
-    const result = await col.updateOne(
-      { _id: cropObjectId },
-      { $push: { interests: newInterest } }
-    );
-
-    if (result.modifiedCount > 0) {
-      return res.send({
+    try {
+      const insertRes = await interestsCol.insertOne(interestDoc);
+      return res.status(201).json({
         success: true,
         message: "Interest submitted successfully!",
-        interest: newInterest,
+        interest: { _id: insertRes.insertedId, ...interestDoc },
       });
+    } catch (e) {
+      // duplicate interest
+      if (e?.code === 11000) {
+        return res.status(409).json({
+          success: false,
+          message: "You’ve already sent an interest for this crop.",
+        });
+      }
+      throw e;
     }
-
-    return res.status(404).send({ message: "Crop not found." });
   } catch (error) {
-    console.error(error);
-    return res.status(500).send({ message: "Server error." });
+    console.error("submitInterest error:", error);
+    return res.status(500).json({ success: false, message: "Server error." });
   }
 }
 
-// GET /myInterests?email=...
+// GET /myInterests  (buyer only)
 async function getMyInterests(req, res) {
   try {
-    const userEmail = req.query.email;
-    if (!userEmail) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Email required" });
-    }
+    const buyerEmail = req.dbUser.email;
 
-    const col = await cropsCollection();
+    const interestsCol = await interestsCollection();
 
-    // Slightly more efficient than fetching everything:
-    // still preserves your output format and sorting behavior.
-    const crops = await col
-      .find({ "interests.userEmail": userEmail })
-      .sort({ quantity: 1 })
+    // Join crop data for your current UI response shape
+    const results = await interestsCol
+      .aggregate([
+        { $match: { buyerEmail } },
+        { $sort: { createdAt: -1 } },
+        {
+          $lookup: {
+            from: "allCrops",
+            localField: "cropId",
+            foreignField: "_id",
+            as: "crop",
+          },
+        },
+        { $unwind: { path: "$crop", preserveNullAndEmptyArrays: true } },
+        {
+          $project: {
+            _id: 1,
+            cropId: "$cropId",
+            cropName: "$crop.name",
+            cropType: "$crop.type",
+            cropImage: "$crop.image",
+            cropLocation: "$crop.location",
+            ownerName: "$crop.owner.ownerName",
+            quantity: 1,
+            message: 1,
+            status: 1,
+            createdAt: 1,
+          },
+        },
+      ])
       .toArray();
-
-    const userInterests = [];
-
-    crops.forEach((crop) => {
-      if (Array.isArray(crop.interests)) {
-        crop.interests.forEach((interest) => {
-          if (interest.userEmail === userEmail) {
-            userInterests.push({
-              _id: interest._id,
-              cropId: crop._id,
-              cropName: crop.name,
-              cropType: crop.type,
-              cropImage: crop.image,
-              cropLocation: crop.location,
-              ownerName: crop.owner?.ownerName || "Unknown",
-              quantity: interest.quantity,
-              message: interest.message,
-              status: interest.status,
-            });
-          }
-        });
-      }
-    });
 
     return res.status(200).json({
       success: true,
-      interests: userInterests,
+      interests: results,
     });
   } catch (error) {
-    console.error("Error fetching user interests:", error);
+    console.error("getMyInterests error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 }
 
-// PATCH /updateInterestStatus/:cropId/:interestId
-async function updateInterestStatus(req, res) {
-  const { cropId, interestId } = req.params;
-  const { status } = req.body;
-
+// GET /allCrops/:id/interests  (farmer owner only)
+async function getCropInterests(req, res) {
   try {
-    const col = await cropsCollection();
+    const cropId = new ObjectId(req.params.id);
 
-    const crop = await col.findOne({ _id: new ObjectId(cropId) });
-    if (!crop) {
+    const interestsCol = await interestsCollection();
+    const results = await interestsCol
+      .find({ cropId })
+      .sort({ createdAt: -1 })
+      .project({
+        buyerName: 1,
+        buyerEmail: 1,
+        quantity: 1,
+        message: 1,
+        status: 1,
+        createdAt: 1,
+      })
+      .toArray();
+
+    return res.status(200).json({ success: true, interests: results });
+  } catch (error) {
+    console.error("getCropInterests error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+
+// PATCH /updateInterestStatus/:cropId/:interestId  (farmer owner only)
+async function updateInterestStatus(req, res) {
+  try {
+    const cropId = new ObjectId(req.params.cropId);
+    const interestId = new ObjectId(req.params.interestId);
+    const { status } = req.body;
+
+    if (!["pending", "accepted", "rejected"].includes(status)) {
       return res
-        .status(404)
-        .json({ success: false, message: "Crop not found" });
+        .status(400)
+        .json({ success: false, message: "Invalid status" });
     }
 
-    const interest = crop.interests?.find(
-      (i) => i._id.toString() === interestId
-    );
+    const interestsCol = await interestsCollection();
+
+    // Ensure interest belongs to crop
+    const interest = await interestsCol.findOne({ _id: interestId, cropId });
     if (!interest) {
       return res
         .status(404)
         .json({ success: false, message: "Interest not found" });
     }
 
+    const cropsCol = await cropsCollection();
+    const crop = await cropsCol.findOne({ _id: cropId });
+    if (!crop) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Crop not found" });
+    }
+
+    if (interest.status !== "pending") {
+      return res.status(400).json({
+        success: false,
+        message: "Interest is already finalized.",
+      });
+    }
+
     let newQuantity = crop.quantity;
 
     if (status === "accepted") {
-      const interestQty = parseInt(interest.quantity);
-      newQuantity = Math.max(0, crop.quantity - interestQty);
-
-      await col.updateOne(
-        {
-          _id: new ObjectId(cropId),
-          "interests._id": new ObjectId(interestId),
-        },
-        { $set: { quantity: newQuantity, "interests.$.status": status } }
+      newQuantity = Math.max(
+        0,
+        Number(crop.quantity) - Number(interest.quantity)
       );
-    } else {
-      await col.updateOne(
-        {
-          _id: new ObjectId(cropId),
-          "interests._id": new ObjectId(interestId),
-        },
-        { $set: { "interests.$.status": status } }
+
+      await cropsCol.updateOne(
+        { _id: cropId },
+        { $set: { quantity: newQuantity, updatedAt: new Date() } }
       );
     }
+
+    await interestsCol.updateOne(
+      { _id: interestId },
+      { $set: { status, updatedAt: new Date() } }
+    );
 
     return res.status(200).json({
       success: true,
@@ -163,12 +230,12 @@ async function updateInterestStatus(req, res) {
           ? `Interest accepted and quantity reduced to ${newQuantity}`
           : "Interest status updated",
       newQuantity,
-      cropId,
-      interestId,
+      cropId: req.params.cropId,
+      interestId: req.params.interestId,
       status,
     });
   } catch (error) {
-    console.error("Update interest error:", error);
+    console.error("updateInterestStatus error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 }
@@ -176,5 +243,6 @@ async function updateInterestStatus(req, res) {
 module.exports = {
   submitInterest,
   getMyInterests,
+  getCropInterests,
   updateInterestStatus,
 };

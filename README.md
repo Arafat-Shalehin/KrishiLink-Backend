@@ -1,6 +1,5 @@
 ## ⚙️ **Backend README (`server/README.md`)**
 
-```md
 # 🌾 KrishiLink Server (Backend API)
 
 ### Live API URL: [https://krishi-link-backend.vercel.app/](https://krishi-link-backend.vercel.app/)

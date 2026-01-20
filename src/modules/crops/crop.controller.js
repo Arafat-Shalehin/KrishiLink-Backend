@@ -47,41 +47,47 @@ async function getCropById(req, res) {
 async function createCrop(req, res) {
   try {
     const cropData = req.body;
+
+    // ✅ enforce owner server-side
+    cropData.owner = {
+      ownerEmail: req.dbUser.email,
+      ownerName: req.dbUser.name || req.dbUser.email,
+      ownerUid: req.dbUser.uid,
+    };
+
     cropData.interests = [];
+    cropData.createdAt = new Date();
+    cropData.updatedAt = new Date();
 
     const col = await cropsCollection();
     const result = await col.insertOne(cropData);
 
-    return res.status(201).json({
+    res.status(201).json({
       success: true,
       message: "Crop added successfully",
       cropId: result.insertedId,
     });
-  } catch (err) {
-    return res.status(500).json({ success: false, message: "Server error" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 }
 
 // GET /myCrops?email=...
 async function getMyCrops(req, res) {
   try {
-    const { email } = req.query;
-    if (!email) {
-      return res.status(400).json({
-        success: false,
-        message: "Missing user email.",
-      });
-    }
-
+    const email = req.dbUser.email; // ✅ from verified token+db user
     const col = await cropsCollection();
+
     const result = await col.find({ "owner.ownerEmail": email }).toArray();
 
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       crops: result,
     });
-  } catch (err) {
-    return res.status(500).json({
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
       success: false,
       message: "Server error while fetching user crops.",
     });

@@ -1,4 +1,6 @@
 const { usersCollection, ensureUserIndexes } = require("./user.model");
+const { cropsCollection } = require("../crops/crop.model");
+const { interestsCollection } = require("../interests/interest.model");
 
 // POST /users/sync
 // Creates user doc if not exists, otherwise updates profile fields.
@@ -55,7 +57,7 @@ async function syncUser(req, res) {
           photoURL: photoURL || existing.photoURL,
           updatedAt: new Date(),
         },
-      }
+      },
     );
 
     const updated = await col.findOne({ uid });
@@ -76,6 +78,172 @@ async function syncUser(req, res) {
       });
     }
 
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+
+// POST /users/request-farmer
+async function requestFarmer(req, res) {
+  try {
+    const uid = req.auth?.uid;
+    const email = req.auth?.email;
+
+    if (!uid || !email) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+
+    const col = await usersCollection();
+    const user = await col.findOne({ uid });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found in DB. Call /users/sync first.",
+      });
+    }
+
+    if (user.status === "blocked") {
+      return res.status(403).json({
+        success: false,
+        message: "Your account is blocked.",
+      });
+    }
+
+    if (user.role !== "buyer") {
+      return res.status(400).json({
+        success: false,
+        message: "Only buyers can request farmer access.",
+      });
+    }
+
+    if (user.farmerRequest?.status === "rejected") {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Your farmer request was rejected. Please contact admin to re-apply.",
+      });
+    }
+
+    // ✅ prevent duplicate pending
+    if (user.farmerRequest?.status === "pending") {
+      return res.status(409).json({
+        success: false,
+        message: "Your farmer request is already pending.",
+      });
+    }
+
+    // ✅ allow re-request after cancelled/rejected/none
+    const now = new Date();
+
+    await col.updateOne(
+      { uid },
+      {
+        $set: {
+          farmerRequest: {
+            status: "pending",
+            requestedAt: now,
+            updatedAt: now,
+          },
+          updatedAt: now,
+        },
+      },
+    );
+
+    const updated = await col.findOne({ uid });
+
+    return res.status(200).json({
+      success: true,
+      message: "Farmer request submitted.",
+      user: updated,
+    });
+  } catch (err) {
+    console.error("requestFarmer error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+
+// PATCH /users/request-farmer/cancel
+async function cancelFarmerRequest(req, res) {
+  try {
+    const uid = req.auth?.uid;
+    const email = req.auth?.email;
+
+    if (!uid || !email) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+
+    const col = await usersCollection();
+    const user = await col.findOne({ uid });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found in DB. Call /users/sync first.",
+      });
+    }
+
+    if (user.farmerRequest?.status !== "pending") {
+      return res.status(400).json({
+        success: false,
+        message: "No pending farmer request to cancel.",
+      });
+    }
+
+    const now = new Date();
+
+    await col.updateOne(
+      { uid },
+      {
+        $set: {
+          "farmerRequest.status": "cancelled",
+          "farmerRequest.updatedAt": now,
+          updatedAt: now,
+        },
+      },
+    );
+
+    const updated = await col.findOne({ uid });
+
+    return res.status(200).json({
+      success: true,
+      message: "Farmer request cancelled.",
+      user: updated,
+    });
+  } catch (err) {
+    console.error("cancelFarmerRequest error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+
+// ✅ NEW: GET /users/me/stats
+// Returns counts for current logged-in user:
+// - how many crops they posted (based on current schema: owner.ownerEmail)
+// - how many interests they have sent (based on current schema: crops.interests[])
+async function getMyStats(req, res) {
+  // console.log(req);
+  try {
+    const { email } = req.auth;
+    // console.log(email);
+    const uid = req.auth.uid;
+    // console.log(uid);
+
+    const cropsCol = await cropsCollection();
+    const interestsCol = await interestsCollection();
+
+    const myPostsCount = await cropsCol.countDocuments({
+      "owner.ownerEmail": email,
+    });
+
+    const myInterestsCount = await interestsCol.countDocuments({
+      buyerEmail: email,
+    });
+
+    return res.status(200).json({
+      success: true,
+      stats: { myPostsCount, myInterestsCount },
+    });
+  } catch (err) {
+    console.error("getMyStats error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 }
@@ -105,4 +273,10 @@ async function getMe(req, res) {
   }
 }
 
-module.exports = { syncUser, getMe };
+module.exports = {
+  syncUser,
+  getMe,
+  requestFarmer,
+  cancelFarmerRequest,
+  getMyStats,
+};

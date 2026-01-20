@@ -1,6 +1,11 @@
 const express = require("express");
 const router = express.Router();
 
+const verifyFirebaseToken = require("../../middlewares/verifyFirebaseToken");
+const attachDbUser = require("../../middlewares/attachDbUser");
+const requireRole = require("../../middlewares/requireRole");
+const requireOwnership = require("../../middlewares/requireOwnership");
+
 const {
   getSixCrops,
   getAllCrops,
@@ -11,14 +16,44 @@ const {
   deleteMyCrop,
 } = require("./crop.controller");
 
-// Same endpoints
+// Public
 router.get("/sixCrops", getSixCrops);
 router.get("/allCrops", getAllCrops);
 router.get("/allCrops/:id", getCropById);
-router.post("/allCrops", createCrop);
 
-router.get("/myCrops", getMyCrops);
-router.put("/myCrops/:id", updateMyCrop);
-router.delete("/myCrops/:id", deleteMyCrop);
+// Protected (farmer)
+router.post(
+  "/allCrops",
+  verifyFirebaseToken,
+  attachDbUser,
+  requireRole(["farmer"]),
+  createCrop
+);
+
+router.get(
+  "/myCrops",
+  verifyFirebaseToken,
+  attachDbUser,
+  requireRole(["farmer"]),
+  getMyCrops
+);
+
+router.put(
+  "/myCrops/:id",
+  verifyFirebaseToken,
+  attachDbUser,
+  requireRole(["farmer"]),
+  requireOwnership("id"),
+  updateMyCrop
+);
+
+router.delete(
+  "/myCrops/:id",
+  verifyFirebaseToken,
+  attachDbUser,
+  requireRole(["farmer"]),
+  requireOwnership("id"),
+  deleteMyCrop
+);
 
 module.exports = router;
