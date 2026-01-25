@@ -15,7 +15,7 @@ router.get(
   verifyFirebaseToken,
   attachDbUser,
   requireRole(["buyer"]),
-  getBuyerDashboard
+  getBuyerDashboard,
 );
 
 router.get(
@@ -23,7 +23,7 @@ router.get(
   verifyFirebaseToken,
   attachDbUser,
   requireRole(["farmer"]),
-  getFarmerDashboard
+  getFarmerDashboard,
 );
 
 module.exports = router;
