@@ -5,6 +5,7 @@ const cropRoutes = require("./modules/crops/crop.routes");
 const interestRoutes = require("./modules/interests/interest.routes");
 const userRoutes = require("./modules/users/user.routes");
 const dashboardRoutes = require("./modules/dashboard/dashboard.routes");
+const adminRoutes = require("./modules/admin/admin.routes");
 
 const app = express();
 
@@ -12,11 +13,12 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Routes (mounted without prefix to keep exact endpoints)
+// Routes
 app.use(cropRoutes);
 app.use(interestRoutes);
 app.use(userRoutes);
 app.use(dashboardRoutes);
+app.use(adminRoutes);
 
 // Health
 app.get("/", (req, res) => {

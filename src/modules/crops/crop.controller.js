@@ -7,7 +7,7 @@ async function getSixCrops(req, res) {
   try {
     const col = await cropsCollection();
     const result = await col
-      .find()
+      .find({ status: "active" })
       .sort({ pricePerUnit: 1 })
       .limit(6)
       .toArray();
@@ -21,7 +21,10 @@ async function getSixCrops(req, res) {
 async function getAllCrops(req, res) {
   try {
     const col = await cropsCollection();
-    const result = await col.find().sort({ pricePerUnit: -1 }).toArray();
+    const result = await col
+      .find({ status: "active" })
+      .sort({ pricePerUnit: -1 })
+      .toArray();
     return res.send(result); // keep original response shape
   } catch (err) {
     return fail(res, "Server error", 500);
@@ -35,7 +38,9 @@ async function getCropById(req, res) {
     const col = await cropsCollection();
 
     const result = await col.findOne({ _id: new ObjectId(id) });
-    if (!result) return res.status(404).send({ message: "Crop not found" });
+    if (!result || result.status === "hidden") {
+      return res.status(404).send({ message: "Crop not found" });
+    }
 
     return res.send(result); // keep original response shape
   } catch (err) {
@@ -55,7 +60,7 @@ async function createCrop(req, res) {
       ownerUid: req.dbUser.uid,
     };
 
-    cropData.interests = [];
+    cropData.status = "hidden";
     cropData.createdAt = new Date();
     cropData.updatedAt = new Date();
 
