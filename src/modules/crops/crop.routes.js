@@ -9,6 +9,7 @@ const requireOwnership = require("../../middlewares/requireOwnership");
 const {
   getSixCrops,
   getAllCrops,
+  getFilterOptions,
   getCropById,
   createCrop,
   getMyCrops,
@@ -19,6 +20,7 @@ const {
 // Public
 router.get("/sixCrops", getSixCrops);
 router.get("/allCrops", getAllCrops);
+router.get("/allCrops/filter-options", getFilterOptions);
 router.get("/allCrops/:id", getCropById);
 
 // Protected (farmer)
@@ -27,7 +29,7 @@ router.post(
   verifyFirebaseToken,
   attachDbUser,
   requireRole(["farmer"]),
-  createCrop
+  createCrop,
 );
 
 router.get(
@@ -35,7 +37,7 @@ router.get(
   verifyFirebaseToken,
   attachDbUser,
   requireRole(["farmer"]),
-  getMyCrops
+  getMyCrops,
 );
 
 router.put(
@@ -44,7 +46,7 @@ router.put(
   attachDbUser,
   requireRole(["farmer"]),
   requireOwnership("id"),
-  updateMyCrop
+  updateMyCrop,
 );
 
 router.delete(
@@ -53,7 +55,7 @@ router.delete(
   attachDbUser,
   requireRole(["farmer"]),
   requireOwnership("id"),
-  deleteMyCrop
+  deleteMyCrop,
 );
 
 module.exports = router;

@@ -16,6 +16,7 @@ const {
   setCropStatus,
   deleteCrop,
   getAdminOverview,
+  resetFarmerRequest,
 } = require("./admin.controller");
 
 // Everything here requires admin
@@ -32,6 +33,7 @@ router.patch("/admin/users/:id/role", setUserRole);
 router.get("/admin/farmer-requests", listFarmerRequests);
 router.patch("/admin/farmer-requests/:id/approve", approveFarmerRequest);
 router.patch("/admin/farmer-requests/:id/reject", rejectFarmerRequest);
+router.patch("/admin/farmer-requests/:id/reset", resetFarmerRequest);
 
 // Crops moderation
 router.get("/admin/crops", listAllCrops);

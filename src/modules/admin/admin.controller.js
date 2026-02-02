@@ -354,6 +354,50 @@ async function rejectFarmerRequest(req, res) {
   }
 }
 
+// PATCH /admin/farmer-requests/:id/reset
+async function resetFarmerRequest(req, res) {
+  try {
+    const id = req.params.id;
+    const col = await usersCollection();
+    const now = new Date();
+
+    const user = await col.findOne({ _id: new ObjectId(id) });
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    // Only meaningful if rejected (your rule)
+    if (user?.farmerRequest?.status !== "rejected") {
+      return res.status(400).json({
+        success: false,
+        message: "Only rejected requests can be reset.",
+      });
+    }
+
+    // Reset to cancelled (or you can $unset farmerRequest if you prefer)
+    await col.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          "farmerRequest.status": "cancelled",
+          "farmerRequest.updatedAt": now,
+          updatedAt: now,
+        },
+      },
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Farmer request reset. User can request again.",
+    });
+  } catch (err) {
+    console.error("resetFarmerRequest error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+
 // -------------------- CROPS MODERATION --------------------
 
 // GET /admin/crops?search=&status=&page=&limit=
@@ -478,4 +522,5 @@ module.exports = {
   setCropStatus,
   deleteCrop,
   getAdminOverview,
+  resetFarmerRequest,
 };
