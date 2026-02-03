@@ -75,7 +75,9 @@ async function submitInterest(req, res) {
         message: "Interest submitted successfully!",
         interest: { _id: insertRes.insertedId, ...interestDoc },
       });
-    } catch (e) {
+    } 
+    catch (e) {
+      // console.log(e);
       // duplicate interest
       if (e?.code === 11000) {
         return res.status(409).json({
@@ -111,6 +113,14 @@ async function getMyInterests(req, res) {
             as: "crop",
           },
         },
+        {
+          $lookup: {
+            from: "payments",
+            localField: "_id",
+            foreignField: "interestId",
+            as: "paymentHistory",
+          },
+        },
         { $unwind: { path: "$crop", preserveNullAndEmptyArrays: true } },
         {
           $project: {
@@ -120,10 +130,40 @@ async function getMyInterests(req, res) {
             cropType: "$crop.type",
             cropImage: "$crop.image",
             cropLocation: "$crop.location",
+            cropPrice: "$crop.pricePerUnit", // Fixed: Mapping to pricePerUnit
             ownerName: "$crop.owner.ownerName",
+            ownerEmail: "$crop.owner.ownerEmail",
             quantity: 1,
             message: 1,
             status: 1,
+            // Count failed/cancelled payment attempts
+            attemptCount: {
+              $size: {
+                $filter: {
+                  input: "$paymentHistory",
+                  as: "pay",
+                  cond: { 
+                    $in: ["$$pay.status", ["failed", "cancelled"]] 
+                  }
+                }
+              }
+            },
+            
+            // Backfill paymentStatus for legacy accepted interests
+            paymentStatus: {
+              $cond: {
+                if: { $ifNull: ["$paymentStatus", false] },
+                then: "$paymentStatus",
+                else: {
+                  $cond: {
+                    if: { $eq: ["$status", "accepted"] },
+                    then: "awaiting_payment",
+                    else: null
+                  }
+                }
+              }
+            },
+            transactionId: 1,
             createdAt: 1,
           },
         },
@@ -218,9 +258,20 @@ async function updateInterestStatus(req, res) {
       );
     }
 
+    // When farmer accepts, set paymentStatus to 'awaiting_payment'
+    // This tells the buyer they need to pay now
+    const updateData = { 
+      status, 
+      updatedAt: new Date() 
+    };
+    
+    if (status === "accepted") {
+      updateData.paymentStatus = "awaiting_payment";
+    }
+
     await interestsCol.updateOne(
       { _id: interestId },
-      { $set: { status, updatedAt: new Date() } }
+      { $set: updateData }
     );
 
     return res.status(200).json({

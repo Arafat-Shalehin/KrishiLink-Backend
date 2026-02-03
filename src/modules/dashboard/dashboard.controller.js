@@ -87,8 +87,9 @@ async function getBuyerDashboard(req, res) {
       status: "rejected",
     });
 
-    // purchases = accepted (until you add a "completed" state later)
-    const purchases = approvedRequests;
+    const purchases = await interestsCol.countDocuments({
+      paymentStatus: "paid",
+    });
 
     const chart = await buildBuyerJourneyChart(buyerEmail);
 

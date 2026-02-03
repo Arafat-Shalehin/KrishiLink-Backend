@@ -6,12 +6,14 @@ const interestRoutes = require("./modules/interests/interest.routes");
 const userRoutes = require("./modules/users/user.routes");
 const dashboardRoutes = require("./modules/dashboard/dashboard.routes");
 const adminRoutes = require("./modules/admin/admin.routes");
+const paymentRoutes = require("./modules/payments/payment.routes"); // 💳 NEW!
 
 const app = express();
 
 // Middlewares
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Routes
 app.use(cropRoutes);
@@ -19,6 +21,7 @@ app.use(interestRoutes);
 app.use(userRoutes);
 app.use(dashboardRoutes);
 app.use(adminRoutes);
+app.use(paymentRoutes); // 💳 NEW!
 
 // Health
 app.get("/", (req, res) => {
@@ -26,3 +29,4 @@ app.get("/", (req, res) => {
 });
 
 module.exports = app;
+

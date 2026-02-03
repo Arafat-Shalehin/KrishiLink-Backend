@@ -20,7 +20,7 @@ const {
 } = require("./admin.controller");
 
 // Everything here requires admin
-router.use(verifyFirebaseToken, attachDbUser, requireRole(["admin"]));
+router.use("/admin", verifyFirebaseToken, attachDbUser, requireRole(["admin"]));
 
 router.get("/admin/overview", getAdminOverview);
 
