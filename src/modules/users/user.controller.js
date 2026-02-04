@@ -220,27 +220,61 @@ async function cancelFarmerRequest(req, res) {
 // - how many crops they posted (based on current schema: owner.ownerEmail)
 // - how many interests they have sent (based on current schema: crops.interests[])
 async function getMyStats(req, res) {
-  // console.log(req);
   try {
     const { email } = req.auth;
-    // console.log(email);
     const uid = req.auth.uid;
-    // console.log(uid);
 
     const cropsCol = await cropsCollection();
     const interestsCol = await interestsCollection();
+    const usersCol = await usersCollection();
 
+    // 1. Basic Stats (Everyone)
     const myPostsCount = await cropsCol.countDocuments({
       "owner.ownerEmail": email,
-    });
+    }); // Farmer: posts
 
     const myInterestsCount = await interestsCol.countDocuments({
       buyerEmail: email,
+    }); // Buyer: interests sent
+
+    // 2. Role Specific Stats
+
+    // ➤ For Buyer: Count verified purchases
+    const purchasedCount = await interestsCol.countDocuments({
+      buyerEmail: email,
+      paymentStatus: "paid",
     });
+
+    // ➤ For Farmer: Count interests RECEIVED on their crops
+    const receivedInterestsCount = await interestsCol.countDocuments({
+      farmerEmail: email,
+    });
+
+    // ➤ For Admin: System health stats
+    // We only fetch these if the user is actually an admin, but for simplicity/performance in this specific app scale, 
+    // we can just fetch them or check role first. Let's check role to be safe/efficient if we can.
+    // However, simpler is often better for "my stats". Let's just return them.
+    // Ideally we should check if (user.role === 'admin').
+    const userRoleObj = await usersCol.findOne({ uid }, { projection: { role: 1 } });
+    
+    let blockedUsersCount = 0;
+    let farmerRequestsCount = 0;
+
+    if (userRoleObj?.role === "admin") {
+      blockedUsersCount = await usersCol.countDocuments({ status: "blocked" });
+      farmerRequestsCount = await usersCol.countDocuments({ "farmerRequest.status": "pending" });
+    }
 
     return res.status(200).json({
       success: true,
-      stats: { myPostsCount, myInterestsCount },
+      stats: {
+        myPostsCount,           // Farmer: Listed Crops
+        myInterestsCount,       // Buyer: Total Interests Sent
+        purchasedCount,         // Buyer: Confirmed Orders
+        receivedInterestsCount, // Farmer: Potential Buyers
+        blockedUsersCount,      // Admin: Moderation
+        farmerRequestsCount     // Admin: Work items
+      },
     });
   } catch (err) {
     console.error("getMyStats error:", err);

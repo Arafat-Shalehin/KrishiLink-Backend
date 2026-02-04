@@ -143,7 +143,7 @@ async function getMyInterests(req, res) {
                   input: "$paymentHistory",
                   as: "pay",
                   cond: { 
-                    $in: ["$$pay.status", ["failed", "cancelled"]] 
+                    $in: ["$$pay.status", ["failed", "cancelled", "pending"]] 
                   }
                 }
               }

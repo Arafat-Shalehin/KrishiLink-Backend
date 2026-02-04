@@ -88,6 +88,7 @@ async function getBuyerDashboard(req, res) {
     });
 
     const purchases = await interestsCol.countDocuments({
+      buyerEmail,
       paymentStatus: "paid",
     });
 

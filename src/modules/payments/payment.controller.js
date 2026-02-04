@@ -65,10 +65,10 @@ async function initPayment(req, res) {
     // --------------------------------------------------------
     // 🔁 CHECK ATTEMPT LIMIT (Max 3 retries)
     // --------------------------------------------------------
-    const paymentsCol = await paymentsCollection(); // Moved up for use here
+    const paymentsCol = await paymentsCollection();
     const failedCount = await paymentsCol.countDocuments({
       interestId: new ObjectId(interestId),
-      status: { $in: ["failed", "cancelled"] }
+      status: { $in: ["failed", "cancelled", "pending"] }
     });
 
     if (failedCount >= 3) {
