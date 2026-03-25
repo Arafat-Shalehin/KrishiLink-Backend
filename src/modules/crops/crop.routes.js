@@ -5,6 +5,7 @@ const verifyFirebaseToken = require("../../middlewares/verifyFirebaseToken");
 const attachDbUser = require("../../middlewares/attachDbUser");
 const requireRole = require("../../middlewares/requireRole");
 const requireOwnership = require("../../middlewares/requireOwnership");
+const { validate, schemas } = require("../../validation");
 
 const {
   getSixCrops,
@@ -28,8 +29,8 @@ router.post(
   "/allCrops",
   verifyFirebaseToken,
   attachDbUser,
-  requireRole(["farmer"]),
-  createCrop,
+  validate(schemas.createCropSchema, "body"),
+  createCrop
 );
 
 router.get(
