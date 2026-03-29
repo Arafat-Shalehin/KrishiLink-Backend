@@ -1,19 +1,23 @@
 require("dotenv").config();
 const app = require("./app");
 const { connectDB } = require("./config/db");
+const { setupGlobalErrorHandlers, logger } = require("./logging");
 
 const port = process.env.PORT || 3000;
+
+// Setup global error handlers for uncaught exceptions/unhandled rejections
+setupGlobalErrorHandlers();
 
 async function start() {
   try {
     await connectDB();
-    console.log("Connected to MongoDB!");
+    logger.info("Connected to MongoDB!");
 
     app.listen(port, () => {
-      console.log(`KrishiLink server listening on port ${port}`);
+      logger.info({ port }, `KrishiLink server listening on port ${port}`);
     });
   } catch (err) {
-    console.error("Failed to start server:", err);
+    logger.fatal({ err }, "Failed to start server");
     process.exit(1);
   }
 }
