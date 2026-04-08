@@ -276,35 +276,10 @@ async function paymentSuccess(req, res) {
         `${FRONTEND_URL}/payment/error?message=Invalid transaction`,
       );
     }
-    
-    // Force update status here for immediate UX (even if IPN is slow)
-    // Note: IPN will also try this, which is fine (idempotent)
-    const paymentsCol = await paymentsCollection();
-    const payment = await paymentsCol.findOne({ transactionId });
-    
-    if (payment && payment.status !== "completed") {
-       await paymentsCol.updateOne(
-        { transactionId },
-        { 
-          $set: { 
-            status: "completed", 
-            updatedAt: new Date() 
-          } 
-        }
-      );
-      
-      const interestsCol = await interestsCollection();
-       await interestsCol.updateOne(
-        { _id: payment.interestId },
-        { 
-          $set: { 
-            paymentStatus: "paid", 
-            transactionId, 
-            updatedAt: new Date() 
-          } 
-        }
-      );
-    }
+
+    // 🔐 SECURITY FIX: Removed database update logic from redirect handler.
+    // The IPN (Instant Payment Notification) is the ONLY source of truth.
+    // Transitioning state here allows users to forge payment completion requests.
 
     return res.redirect(
       `${FRONTEND_URL}/payment/success?transactionId=${transactionId}`,
@@ -334,21 +309,8 @@ async function paymentFail(req, res) {
 
     console.log("Payment failed callback received:", { tran_id, error });
 
-    if (tran_id) {
-      // Update our record to show it failed
-      const paymentsCol = await paymentsCollection();
-      await paymentsCol.updateOne(
-        { transactionId: tran_id },
-        {
-          $set: {
-            status: "failed",
-            failReason: error || "Payment failed",
-            sslResponse: req.body,
-            updatedAt: new Date(),
-          },
-        },
-      );
-    }
+    // 🔐 SECURITY FIX: Removed database update logic.
+    // State transitions are handled exclusively via validated IPN requests.
 
     // Redirect to frontend failure page
     return res.redirect(
@@ -374,19 +336,8 @@ async function paymentCancel(req, res) {
 
     console.log("Payment cancelled callback received:", { tran_id });
 
-    if (tran_id) {
-      // Update our record to show it was cancelled
-      const paymentsCol = await paymentsCollection();
-      await paymentsCol.updateOne(
-        { transactionId: tran_id },
-        {
-          $set: {
-            status: "cancelled",
-            updatedAt: new Date(),
-          },
-        },
-      );
-    }
+    // 🔐 SECURITY FIX: Removed database update logic.
+    // Prevents unverified client-side attempts to manipulate transaction state.
 
     // Redirect to frontend with cancellation message
     return res.redirect(

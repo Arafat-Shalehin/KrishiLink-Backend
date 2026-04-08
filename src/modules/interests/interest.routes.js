@@ -5,6 +5,7 @@ const verifyFirebaseToken = require("../../middlewares/verifyFirebaseToken");
 const attachDbUser = require("../../middlewares/attachDbUser");
 const requireRole = require("../../middlewares/requireRole");
 const requireOwnership = require("../../middlewares/requireOwnership");
+const { validate, schemas } = require("../../validation");
 
 const {
   submitInterest,
@@ -19,6 +20,7 @@ router.post(
   verifyFirebaseToken,
   attachDbUser,
   requireRole(["buyer"]),
+  validate(schemas.submitInterestSchema),
   submitInterest
 );
 
@@ -46,6 +48,7 @@ router.patch(
   verifyFirebaseToken,
   attachDbUser,
   requireRole(["farmer"]),
+  validate(schemas.updateInterestStatusSchema),
   requireOwnership("cropId"),
   updateInterestStatus
 );

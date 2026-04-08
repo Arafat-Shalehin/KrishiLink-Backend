@@ -14,9 +14,9 @@ async function getSixCrops(req, res) {
       .sort({ pricePerUnit: 1 })
       .limit(6)
       .toArray();
-    return res.send(result);
+    return success(res, { crops: result });
   } catch (err) {
-    return fail(res, "Server error", 500);
+    return fail(res, "Server error while fetching latest crops", 500);
   }
 }
 
@@ -121,8 +121,7 @@ async function getAllCrops(req, res) {
     ]);
 
     // Return formatted response
-    return res.status(200).json({
-      success: true,
+    return success(res, { 
       crops,
       meta: {
         total,
@@ -133,9 +132,7 @@ async function getAllCrops(req, res) {
     });
   } catch (err) {
     console.error("getAllCrops error:", err);
-    return res.status(500).json({
-      success: false,
-      message: "Server error",
+    return fail(res, "Server error while fetching crops catalog", 500, {
       crops: [],
       meta: { total: 0, page: 1, limit: 12, totalPages: 0 },
     });
@@ -174,16 +171,10 @@ async function getFilterOptions(req, res) {
     const types = result[0]?.types?.map((doc) => doc._id) || [];
     const locations = result[0]?.locations?.map((doc) => doc._id) || [];
 
-    return res.status(200).json({
-      success: true,
-      types,
-      locations,
-    });
+    return success(res, { types, locations });
   } catch (err) {
     console.error("getFilterOptions error:", err);
-    return res.status(500).json({
-      success: false,
-      message: "Server error",
+    return fail(res, "Server error while fetching filter options", 500, {
       types: [],
       locations: [],
     });
@@ -200,12 +191,12 @@ async function getCropById(req, res) {
 
     const result = await col.findOne({ _id: new ObjectId(id) });
     if (!result || result.status === "hidden") {
-      return res.status(404).send({ message: "Crop not found" });
+      return fail(res, "Crop not found", 404);
     }
 
-    return res.send(result);
+    return success(res, { crop: result });
   } catch (err) {
-    return res.status(500).send({ message: "Internal server error" });
+    return fail(res, "Internal server error while fetching crop details", 500);
   }
 }
 
@@ -229,14 +220,10 @@ async function createCrop(req, res) {
     const col = await cropsCollection();
     const result = await col.insertOne(cropData);
 
-    res.status(201).json({
-      success: true,
-      message: "Crop added successfully",
-      cropId: result.insertedId,
-    });
+    return success(res, { cropId: result.insertedId }, "Crop added successfully", 201);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ success: false, message: "Server error" });
+    return fail(res, "Server error while creating crop", 500);
   }
 }
 
@@ -250,16 +237,10 @@ async function getMyCrops(req, res) {
 
     const result = await col.find({ "owner.ownerEmail": email }).toArray();
 
-    res.status(200).json({
-      success: true,
-      crops: result,
-    });
+    return success(res, { crops: result });
   } catch (error) {
     console.error(error);
-    res.status(500).json({
-      success: false,
-      message: "Server error while fetching user crops.",
-    });
+    return fail(res, "Server error while fetching your crops", 500);
   }
 }
 
@@ -272,7 +253,11 @@ async function updateMyCrop(req, res) {
     const updatedData = req.body;
 
     const col = await cropsCollection();
-    const filter = { _id: new ObjectId(id) };
+    // 🛡️ Defense-in-Depth: Enforce ownership at the query level
+    const filter = { 
+      _id: new ObjectId(id), 
+      "owner.ownerEmail": req.dbUser.email 
+    };
 
     const updateDoc = {
       $set: {
@@ -291,21 +276,12 @@ async function updateMyCrop(req, res) {
     const result = await col.updateOne(filter, updateDoc);
 
     if (result.modifiedCount === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "No crop found or no changes made.",
-      });
+      return fail(res, "No crop found or no changes made", 404);
     }
 
-    return res.status(200).json({
-      success: true,
-      message: "Crop updated successfully.",
-    });
+    return success(res, {}, "Crop updated successfully.");
   } catch (err) {
-    return res.status(500).json({
-      success: false,
-      message: "Server error while updating crop.",
-    });
+    return fail(res, "Server error while updating crop", 500);
   }
 }
 
@@ -317,24 +293,19 @@ async function deleteMyCrop(req, res) {
     const id = req.params.id;
 
     const col = await cropsCollection();
-    const result = await col.deleteOne({ _id: new ObjectId(id) });
+    // 🛡️ Defense-in-Depth: Enforce ownership at the query level
+    const result = await col.deleteOne({ 
+      _id: new ObjectId(id), 
+      "owner.ownerEmail": req.dbUser.email 
+    });
 
     if (result.deletedCount === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Crop not found.",
-      });
+      return fail(res, "Crop not found", 404);
     }
 
-    return res.status(200).json({
-      success: true,
-      message: "Crop deleted successfully.",
-    });
+    return success(res, {}, "Crop deleted successfully.");
   } catch (err) {
-    return res.status(500).json({
-      success: false,
-      message: "Server error while deleting crop.",
-    });
+    return fail(res, "Server error while deleting crop", 500);
   }
 }
 

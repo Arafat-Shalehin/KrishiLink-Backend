@@ -25,21 +25,63 @@ const client = new MongoClient(uri, {
   },
 });
 
+// ----------------------------------------------------------------------------
+// Reconnection & Error Handling
+// ----------------------------------------------------------------------------
+client.on("error", (err) => {
+  console.error("MongoDB Client Error:", err);
+  cachedDb = null;
+  connectPromise = null;
+});
+
+client.on("close", () => {
+  console.warn("MongoDB Connection Closed. Resetting connection cache.");
+  cachedDb = null;
+  connectPromise = null;
+});
+
 let cachedDb = null;
 let connectPromise = null;
+const MAX_RETRIES = 5;
 
+/**
+ * Connects to MongoDB with retry logic and exponential backoff.
+ */
 async function connectDB() {
+  // Return cached DB if we are already connected
   if (cachedDb) return cachedDb;
 
-  if (!connectPromise) {
-    connectPromise = client.connect();
+  let attempt = 1;
+  while (attempt <= MAX_RETRIES) {
+    try {
+      if (!connectPromise) {
+        connectPromise = client.connect();
+      }
+
+      await connectPromise;
+      cachedDb = client.db("KrishiLink");
+      
+      console.log(`Successfully connected to DB: ${cachedDb.databaseName} (Attempt ${attempt})`);
+      return cachedDb;
+    } catch (err) {
+      console.error(`DB connection attempt ${attempt} failed:`, err.message);
+      
+      // Reset promises to allow fresh retry
+      connectPromise = null;
+      cachedDb = null;
+
+      if (attempt >= MAX_RETRIES) {
+        console.error("Critical: Maximum DB connection retries reached.");
+        throw err;
+      }
+
+      // Exponential backoff: 2s, 4s, 8s, 16s...
+      const delay = Math.pow(2, attempt) * 1000;
+      console.log(`Retrying in ${delay / 1000}s...`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      attempt++;
+    }
   }
-
-  await connectPromise;
-
-  cachedDb = client.db("KrishiLink");
-  console.log("Connected to DB:", client.db().databaseName);
-  return cachedDb;
 }
 
 async function getDb() {
