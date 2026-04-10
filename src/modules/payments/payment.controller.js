@@ -486,15 +486,33 @@ async function getMyPayments(req, res) {
         .json({ success: false, message: "Not authenticated" });
     }
 
+    // 1. Pagination Params
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.max(1, Math.min(100, parseInt(req.query.limit) || 10)); // Cap limit at 100
+    const skip = (page - 1) * limit;
+
     const paymentsCol = await paymentsCollection();
-    const payments = await paymentsCol
-      .find({ userEmail })
-      .sort({ createdAt: -1 }) // Newest first
-      .toArray();
+
+    // 2. Fetch Total Count & Paginated Data
+    const [payments, totalCount] = await Promise.all([
+      paymentsCol
+        .find({ userEmail })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .toArray(),
+      paymentsCol.countDocuments({ userEmail }),
+    ]);
 
     return res.status(200).json({
       success: true,
       payments,
+      pagination: {
+        totalCount,
+        totalPages: Math.ceil(totalCount / limit),
+        currentPage: page,
+        limit,
+      },
     });
   } catch (error) {
     console.error("getMyPayments error:", error);

@@ -98,4 +98,5 @@ module.exports = {
   connectDB,
   getDb,
   getCollection,
+  client, // Native client for transactions/sessions
 };

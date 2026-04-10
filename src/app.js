@@ -79,35 +79,7 @@ app.use(
   }),
 );
 
-// 2. Rate Limiting - Prevent API abuse and brute force
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === "development" ? 1000 : 100, // Relaxed limit in development to avoid fetch failures during hot reloads
-  message: {
-    success: false,
-    message: "Too many requests from this IP, please try again later.",
-  },
-  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
-  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
-  handler: (req, res) => {
-    res.status(429).json({
-      success: false,
-      message: "Too many requests from this IP, please try again later.",
-      retryAfter: Math.ceil(req.rateLimit.resetTime / 1000),
-    });
-  },
-});
-
-// Stricter rate limit for authentication endpoints
-const authLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 10, // 10 login attempts per hour
-  message: {
-    success: false,
-    message: "Too many authentication attempts, please try again later.",
-  },
-  skipSuccessfulRequests: true, // Don't count successful logins
-});
+const { apiLimiter } = require("./middlewares/rateLimiter");
 
 // Apply rate limiting to all API routes
 app.use("/", apiLimiter);

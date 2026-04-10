@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 
 const verifyFirebaseToken = require("../../middlewares/verifyFirebaseToken");
+const { authLimiter } = require("../../middlewares/rateLimiter");
 const {
   syncUser,
   getMe,
@@ -10,7 +11,7 @@ const {
   getMyStats,
 } = require("./user.controller");
 
-router.post("/users/sync", verifyFirebaseToken, syncUser);
+router.post("/users/sync", authLimiter, verifyFirebaseToken, syncUser);
 router.get("/users/me", verifyFirebaseToken, getMe);
 router.post("/users/request-farmer", verifyFirebaseToken, requestFarmer);
 router.patch(

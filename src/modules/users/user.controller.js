@@ -1,4 +1,5 @@
 const { usersCollection, ensureUserIndexes } = require("./user.model");
+const attachDbUser = require("../../middlewares/attachDbUser");
 const { cropsCollection } = require("../crops/crop.model");
 const { interestsCollection } = require("../interests/interest.model");
 
@@ -39,6 +40,7 @@ async function syncUser(req, res) {
       };
 
       await col.insertOne(doc);
+      attachDbUser.invalidateUserCache(uid);
 
       return res.status(201).json({
         success: true,
@@ -59,6 +61,8 @@ async function syncUser(req, res) {
         },
       },
     );
+
+    attachDbUser.invalidateUserCache(uid);
 
     const updated = await col.findOne({ uid });
 
@@ -149,6 +153,8 @@ async function requestFarmer(req, res) {
       },
     );
 
+    attachDbUser.invalidateUserCache(uid);
+
     const updated = await col.findOne({ uid });
 
     return res.status(200).json({
@@ -201,6 +207,8 @@ async function cancelFarmerRequest(req, res) {
         },
       },
     );
+
+    attachDbUser.invalidateUserCache(uid);
 
     const updated = await col.findOne({ uid });
 

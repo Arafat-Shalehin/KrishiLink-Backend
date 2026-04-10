@@ -1,5 +1,6 @@
 const { ObjectId } = require("../../config/db");
 const { usersCollection } = require("../users/user.model");
+const attachDbUser = require("../../middlewares/attachDbUser");
 const { cropsCollection } = require("../crops/crop.model");
 const { interestsCollection } = require("../interests/interest.model");
 
@@ -175,16 +176,17 @@ async function setUserStatus(req, res) {
 
     const col = await usersCollection();
 
-    const result = await col.updateOne(
+    const user = await col.findOne({ _id: new ObjectId(id) });
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    await col.updateOne(
       { _id: new ObjectId(id) },
       { $set: { status, updatedAt: new Date() } },
     );
 
-    if (result.matchedCount === 0) {
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
-    }
+    attachDbUser.invalidateUserCache(user.uid);
 
     return res.status(200).json({
       success: true,
@@ -208,7 +210,12 @@ async function setUserRole(req, res) {
 
     const col = await usersCollection();
 
-    const result = await col.updateOne(
+    const user = await col.findOne({ _id: new ObjectId(id) });
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    await col.updateOne(
       { _id: new ObjectId(id) },
       {
         $set: {
@@ -218,12 +225,8 @@ async function setUserRole(req, res) {
       },
     );
 
-    if (result.matchedCount === 0) {
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
-    }
-
+    attachDbUser.invalidateUserCache(user.uid);
+    
     return res.status(200).json({
       success: true,
       message: `User role updated to ${role}`,
@@ -312,6 +315,8 @@ async function approveFarmerRequest(req, res) {
       },
     );
 
+    attachDbUser.invalidateUserCache(user.uid);
+
     return res
       .status(200)
       .json({ success: true, message: "Farmer request approved." });
@@ -344,6 +349,8 @@ async function rejectFarmerRequest(req, res) {
         },
       },
     );
+
+    attachDbUser.invalidateUserCache(user.uid);
 
     return res
       .status(200)
@@ -387,6 +394,8 @@ async function resetFarmerRequest(req, res) {
         },
       },
     );
+
+    attachDbUser.invalidateUserCache(user.uid);
 
     return res.status(200).json({
       success: true,

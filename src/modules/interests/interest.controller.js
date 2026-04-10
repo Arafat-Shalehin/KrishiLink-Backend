@@ -1,4 +1,4 @@
-const { ObjectId } = require("../../config/db");
+const { ObjectId, client } = require("../../config/db");
 const { cropsCollection } = require("../crops/crop.model");
 const {
   interestsCollection,
@@ -208,6 +208,7 @@ async function getCropInterests(req, res) {
 
 // PATCH /updateInterestStatus/:cropId/:interestId  (farmer owner only)
 async function updateInterestStatus(req, res) {
+  const session = client.startSession();
   try {
     const cropId = new ObjectId(req.params.cropId);
     const interestId = new ObjectId(req.params.interestId);
@@ -219,75 +220,92 @@ async function updateInterestStatus(req, res) {
         .json({ success: false, message: "Invalid status" });
     }
 
-    const interestsCol = await interestsCollection();
+    let result = null;
 
-    // Ensure interest belongs to crop
-    const interest = await interestsCol.findOne({ _id: interestId, cropId });
-    if (!interest) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Interest not found" });
-    }
+    // ✅ Start Multi-Document Transaction
+    await session.withTransaction(async () => {
+      const interestsCol = await interestsCollection();
+      const cropsCol = await cropsCollection();
 
-    const cropsCol = await cropsCollection();
-    const crop = await cropsCol.findOne({ _id: cropId });
-    if (!crop) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Crop not found" });
-    }
+      // 1. Fetch interest within session
+      const interest = await interestsCol.findOne(
+        { _id: interestId, cropId },
+        { session }
+      );
+      if (!interest) {
+        throw new Error("Interest not found");
+      }
 
-    if (interest.status !== "pending") {
-      return res.status(400).json({
-        success: false,
-        message: "Interest is already finalized.",
-      });
-    }
+      // 2. Fetch crop within session
+      const crop = await cropsCol.findOne({ _id: cropId }, { session });
+      if (!crop) {
+        throw new Error("Crop not found");
+      }
 
-    let newQuantity = crop.quantity;
+      if (interest.status !== "pending") {
+        throw new Error("Interest is already finalized.");
+      }
 
-    if (status === "accepted") {
-      newQuantity = Math.max(
-        0,
-        Number(crop.quantity) - Number(interest.quantity)
+      let newQuantity = crop.quantity;
+
+      // 3. Update Crop Quantity if accepted
+      if (status === "accepted") {
+        newQuantity = Math.max(
+          0,
+          Number(crop.quantity) - Number(interest.quantity)
+        );
+
+        await cropsCol.updateOne(
+          { _id: cropId },
+          { $set: { quantity: newQuantity, updatedAt: new Date() } },
+          { session }
+        );
+      }
+
+      // 4. Update Interest Status
+      const updateData = {
+        status,
+        updatedAt: new Date(),
+      };
+
+      if (status === "accepted") {
+        updateData.paymentStatus = "awaiting_payment";
+      }
+
+      await interestsCol.updateOne(
+        { _id: interestId },
+        { $set: updateData },
+        { session }
       );
 
-      await cropsCol.updateOne(
-        { _id: cropId },
-        { $set: { quantity: newQuantity, updatedAt: new Date() } }
-      );
-    }
-
-    // When farmer accepts, set paymentStatus to 'awaiting_payment'
-    // This tells the buyer they need to pay now
-    const updateData = { 
-      status, 
-      updatedAt: new Date() 
-    };
-    
-    if (status === "accepted") {
-      updateData.paymentStatus = "awaiting_payment";
-    }
-
-    await interestsCol.updateOne(
-      { _id: interestId },
-      { $set: updateData }
-    );
+      // Store results for the external response
+      result = { newQuantity, status };
+    });
 
     return res.status(200).json({
       success: true,
       message:
         status === "accepted"
-          ? `Interest accepted and quantity reduced to ${newQuantity}`
+          ? `Interest accepted and quantity reduced to ${result.newQuantity}`
           : "Interest status updated",
-      newQuantity,
+      newQuantity: result.newQuantity,
       cropId: req.params.cropId,
       interestId: req.params.interestId,
-      status,
+      status: result.status,
     });
   } catch (error) {
-    console.error("updateInterestStatus error:", error);
-    return res.status(500).json({ success: false, message: "Server error" });
+    if (
+      error.message.includes("not found") ||
+      error.message.includes("finalized")
+    ) {
+      return res.status(404).json({ success: false, message: error.message });
+    }
+    console.error("updateInterestStatus transaction error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error during transaction" });
+  } finally {
+    await session.endSession();
   }
 }
 
