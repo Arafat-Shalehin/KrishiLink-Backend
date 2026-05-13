@@ -37,6 +37,7 @@
 - **Secure Authentication** — Firebase Admin SDK integration for JWT token verification
 - **Resource Ownership Validation** — Custom middleware ensures users can only modify their own resources
 - **Modular Architecture** — Clean separation of concerns following MVC-like patterns
+- **Production Ready** — Deployed on Vercel with serverless function optimization
 
 ---
 
