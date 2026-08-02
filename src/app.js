@@ -12,6 +12,7 @@ const userRoutes = require("./modules/users/user.routes");
 const dashboardRoutes = require("./modules/dashboard/dashboard.routes");
 const adminRoutes = require("./modules/admin/admin.routes");
 const paymentRoutes = require("./modules/payments/payment.routes");
+const reAttemptRoutes = require("./modules/reAttempts/reAttempt.routes");
 
 const app = express();
 
@@ -98,6 +99,7 @@ app.use(userRoutes);
 app.use(dashboardRoutes);
 app.use(adminRoutes);
 app.use(paymentRoutes);
+app.use(reAttemptRoutes);
 
 // Health check endpoint (excluded from rate limiting for monitoring)
 app.get("/health", (req, res) => {
