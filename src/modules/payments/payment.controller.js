@@ -3,6 +3,7 @@ const { ObjectId } = require("../../config/db");
 const { paymentsCollection, ensurePaymentIndexes } = require("./payment.model");
 const { interestsCollection } = require("../interests/interest.model");
 const { cropsCollection } = require("../crops/crop.model");
+const { buyerCropLocksCollection } = require("../interests/buyerCropLock.model");
 
 const store_id = process.env.SSLCOMMERZ_STORE_ID;
 const store_passwd = process.env.SSLCOMMERZ_STORE_PASSWORD;
@@ -62,21 +63,6 @@ async function initPayment(req, res) {
     // STEP 3: Find the interest to get crop details
     // --------------------------------------------------------
     const interestsCol = await interestsCollection();
-    // --------------------------------------------------------
-    // 🔁 CHECK ATTEMPT LIMIT (Max 3 retries)
-    // --------------------------------------------------------
-    const paymentsCol = await paymentsCollection();
-    const failedCount = await paymentsCol.countDocuments({
-      interestId: new ObjectId(interestId),
-      status: { $in: ["failed", "cancelled", "pending"] }
-    });
-
-    if (failedCount >= 3) {
-      return res.status(403).json({
-        success: false,
-        message: "Maximum payment attempts reached. Contact support.",
-      });
-    }
 
     const interest = await interestsCol.findOne({
       _id: new ObjectId(interestId),
@@ -86,6 +72,20 @@ async function initPayment(req, res) {
       return res.status(404).json({
         success: false,
         message: "Interest not found",
+      });
+    }
+
+    // --------------------------------------------------------
+    // 🔁 CHECK ATTEMPT LIMIT (Max 3 retries)
+    // attemptCount is stored directly on the interest document
+    // and is reset to 0 when admin approves a re-attempt request.
+    // --------------------------------------------------------
+    const currentAttemptCount = interest.attemptCount || 0;
+
+    if (currentAttemptCount >= 3) {
+      return res.status(403).json({
+        success: false,
+        message: "Maximum payment attempts reached. Contact support.",
       });
     }
 
@@ -141,6 +141,15 @@ async function initPayment(req, res) {
     await paymentsCol.insertOne(paymentRecord);
 
     // --------------------------------------------------------
+    // STEP 5b: Increment attemptCount on the interest document
+    // This is the authoritative counter — reset to 0 on re-attempt approval
+    // --------------------------------------------------------
+    await interestsCol.updateOne(
+      { _id: new ObjectId(interestId) },
+      { $inc: { attemptCount: 1 }, $set: { updatedAt: new Date() } }
+    );
+
+    // --------------------------------------------------------
     // STEP 6: Prepare data for SSLCommerz
     // --------------------------------------------------------
     /**
@@ -164,7 +173,9 @@ async function initPayment(req, res) {
       success_url: `${BACKEND_URL}/payment/success`,
       fail_url: `${BACKEND_URL}/payment/fail`,
       cancel_url: `${BACKEND_URL}/payment/cancel`,
-      ipn_url: `${BACKEND_URL}/payment/ipn`, // Server-to-server notification
+      ...(process.env.NODE_ENV === "production" && {
+        ipn_url: `${BACKEND_URL}/payment/ipn`, // Server-to-server notification
+      }),
 
       // 📦 What they're buying
       product_name: crop?.name || "Agricultural Product",
@@ -242,6 +253,115 @@ async function initPayment(req, res) {
 }
 
 // ============================================================================
+// 🔒 INTERNAL HELPER: verifyAndCompletePayment
+// ============================================================================
+async function verifyAndCompletePayment(transactionId, valId) {
+  const paymentsCol = await paymentsCollection();
+  const payment = await paymentsCol.findOne({ transactionId });
+
+  if (!payment) {
+    console.error("Verification failed: payment not found for", transactionId);
+    return { success: false, status: 404, message: "Payment not found" };
+  }
+
+  // Safe idempotent check - if already completed, return success
+  if (payment.status === "completed") {
+    console.log(`Payment ${transactionId} already completed.`);
+    return { success: true, message: "Already processed" };
+  }
+
+  // 1. Validate with SSLCommerz using val_id
+  const sslcz = new SSLCommerzPayment(store_id, store_passwd, is_live);
+  const validateResponse = await sslcz.validate({ val_id: valId });
+
+  console.log("Validation response for", transactionId, ":", validateResponse);
+
+  if (
+    validateResponse.status !== "VALID" &&
+    validateResponse.status !== "VALIDATED"
+  ) {
+    console.error("Validation failed with SSLCommerz status:", validateResponse.status);
+    return { success: false, status: 400, message: "Invalid payment status" };
+  }
+
+  // 2. Cross-check transaction ID
+  if (validateResponse.tran_id !== transactionId) {
+    console.error("Transaction ID mismatch", {
+      expected: transactionId,
+      got: validateResponse.tran_id,
+    });
+    return { success: false, status: 400, message: "Transaction ID mismatch" };
+  }
+
+  // 3. Cross-check amount
+  if (Number(validateResponse.amount) !== Number(payment.amount)) {
+    console.error("Amount mismatch", {
+      expected: payment.amount,
+      got: validateResponse.amount,
+    });
+    return { success: false, status: 400, message: "Amount mismatch" };
+  }
+
+  // 4. Update payments collection atomically
+  const result = await paymentsCol.updateOne(
+    { transactionId, status: "pending" },
+    {
+      $set: {
+        status: "completed",
+        validationId: valId,
+        gatewayTransactionId: validateResponse.bank_tran_id,
+        sslResponse: validateResponse,
+        updatedAt: new Date(),
+      },
+    }
+  );
+
+  if (result.matchedCount === 0) {
+    // Already updated by another callback (e.g. race condition between success redirect and IPN)
+    console.log(`Payment ${transactionId} status change bypassed (already updated).`);
+    return { success: true, message: "Already processed" };
+  }
+
+  // 5. Update interests collection
+  const interestsCol = await interestsCollection();
+  await interestsCol.updateOne(
+    { _id: payment.interestId },
+    {
+      $set: {
+        paymentStatus: "paid",
+        transactionId,
+        updatedAt: new Date(),
+      },
+    }
+  );
+
+  // 6. Reset failedCycleCount to 0 — successful payment clears the slate
+  try {
+    const locksCol = await buyerCropLocksCollection();
+    const now = new Date();
+    await locksCol.updateOne(
+      { cropId: payment.cropId, buyerEmail: payment.userEmail },
+      {
+        $set: { failedCycleCount: 0, updatedAt: now },
+        $setOnInsert: { createdAt: now, lockedAt: null },
+      },
+      { upsert: true }
+    );
+  } catch (lockErr) {
+    console.error("verifyAndCompletePayment: buyerCropLocks reset failed:", {
+      transactionId,
+      cropId: payment.cropId,
+      buyerEmail: payment.userEmail,
+      error: lockErr.message,
+    });
+    // Non-fatal — payment is still considered completed
+  }
+
+  console.log(`Payment ${transactionId} successfully verified and completed.`);
+  return { success: true, message: "Payment completed successfully" };
+}
+
+// ============================================================================
 // ✅ FUNCTION 2: paymentSuccess - User completed payment successfully
 // ============================================================================
 
@@ -261,32 +381,86 @@ async function initPayment(req, res) {
  * But we still use this for a good user experience (immediate redirect).
  */
 async function paymentSuccess(req, res) {
+  // Use query params if body is empty (sometimes happens with GET redirects)
+  const tran_id = req.body?.tran_id || req.query.tran_id;
+  const val_id = req.body?.val_id || req.query.val_id;
+
+  console.log("Payment success redirect:", { tran_id, val_id, body: req.body, query: req.query });
+
+  if (!tran_id) {
+    return res.redirect(`${FRONTEND_URL}/payment/error?message=Invalid+transaction`);
+  }
+
+  // Best-effort verification — never let this crash the redirect
+  if (val_id) {
+    try {
+      await verifyAndCompletePayment(tran_id, val_id);
+    } catch (err) {
+      // Log but don't fail — IPN will handle verification server-side
+      console.error("Verification failed in success redirect (non-fatal):", err.message);
+    }
+  }
+
+  return res.redirect(`${FRONTEND_URL}/payment/success?transactionId=${tran_id}`);
+}
+
+// ============================================================================
+// 🔒 INTERNAL HELPER: recordFailedCycleIfNeeded
+// Called after a payment fails or is cancelled.
+// Checks if the associated interest has now exhausted all 3 attempts,
+// and if so increments failedCycleCount on the buyerCropLocks document.
+// Uses a two-phase write: $inc first, then conditionally set lockedAt.
+// ============================================================================
+async function recordFailedCycleIfNeeded(tran_id) {
   try {
-    const { tran_id } = req.body;
+    const paymentsCol = await paymentsCollection();
+    const payment = await paymentsCol.findOne({ transactionId: tran_id });
+    if (!payment) return;
 
-    // Use query params if body is empty (sometimes happens with GET redirects)
-    const transactionId = tran_id || req.query.tran_id;
+    const interestsCol = await interestsCollection();
+    const interest = await interestsCol.findOne({ _id: payment.interestId });
+    if (!interest) return;
 
-    console.log("Payment success redirect:", { transactionId, body: req.body, query: req.query });
+    // Only record a failed cycle when attempts are exhausted and not yet paid
+    if ((interest.attemptCount || 0) < 3) return;
+    if (interest.paymentStatus === "paid") return;
 
-    // IPN + validation is the only source of truth
+    const locksCol = await buyerCropLocksCollection();
+    const now = new Date();
 
-    if (!transactionId) {
-      return res.redirect(
-        `${FRONTEND_URL}/payment/error?message=Invalid transaction`,
+    // Phase 1: increment failedCycleCount
+    const updateResult = await locksCol.findOneAndUpdate(
+      { cropId: interest.cropId, buyerEmail: interest.buyerEmail },
+      {
+        $inc: { failedCycleCount: 1 },
+        $set: { updatedAt: now },
+        $setOnInsert: { createdAt: now, lockedAt: null },
+      },
+      { upsert: true, returnDocument: "after" }
+    );
+
+    const updatedDoc = updateResult;
+
+    // Phase 2: set lockedAt exactly once when failedCycleCount first reaches 3
+    if (updatedDoc && updatedDoc.failedCycleCount >= 3 && !updatedDoc.lockedAt) {
+      await locksCol.updateOne(
+        { cropId: interest.cropId, buyerEmail: interest.buyerEmail, lockedAt: null },
+        { $set: { lockedAt: now, updatedAt: now } }
+      );
+      console.log(
+        `Buyer ${interest.buyerEmail} permanently locked from crop ${interest.cropId}`
       );
     }
 
-    // 🔐 SECURITY FIX: Removed database update logic from redirect handler.
-    // The IPN (Instant Payment Notification) is the ONLY source of truth.
-    // Transitioning state here allows users to forge payment completion requests.
-
-    return res.redirect(
-      `${FRONTEND_URL}/payment/success?transactionId=${transactionId}`,
+    console.log(
+      `Failed cycle recorded for ${interest.buyerEmail} / crop ${interest.cropId}: count=${updatedDoc?.failedCycleCount}`
     );
-  } catch (error) {
-    console.error("paymentSuccess error:", error);
-    return res.redirect(`${FRONTEND_URL}/payment/error?message=Server error`);
+  } catch (err) {
+    console.error("recordFailedCycleIfNeeded error:", {
+      tran_id,
+      error: err.message,
+    });
+    // Never throw — the redirect has already happened
   }
 }
 
@@ -304,22 +478,21 @@ async function paymentSuccess(req, res) {
  * - Insufficient balance
  */
 async function paymentFail(req, res) {
-  try {
-    const { tran_id, error } = req.body;
+  const tran_id = req.body?.tran_id || req.query.tran_id || "";
+  const errorMsg = req.body?.error || req.query.error || "Payment failed";
 
-    console.log("Payment failed callback received:", { tran_id, error });
+  console.log("Payment failed callback received:", { tran_id, error: errorMsg });
 
-    // 🔐 SECURITY FIX: Removed database update logic.
-    // State transitions are handled exclusively via validated IPN requests.
-
-    // Redirect to frontend failure page
-    return res.redirect(
-      `${FRONTEND_URL}/payment/failed?transactionId=${tran_id || ""}&error=${encodeURIComponent(error || "Payment failed")}`,
+  // Fire-and-forget: check if this failure completes a cycle
+  if (tran_id) {
+    recordFailedCycleIfNeeded(tran_id).catch((err) =>
+      console.error("paymentFail: recordFailedCycleIfNeeded error:", err.message)
     );
-  } catch (error) {
-    console.error("paymentFail error:", error);
-    return res.redirect(`${FRONTEND_URL}/payment/error?message=Server error`);
   }
+
+  return res.redirect(
+    `${FRONTEND_URL}/payment/failed?transactionId=${tran_id}&error=${encodeURIComponent(errorMsg)}`,
+  );
 }
 
 // ============================================================================
@@ -331,22 +504,20 @@ async function paymentFail(req, res) {
  * They didn't enter any card details, just left.
  */
 async function paymentCancel(req, res) {
-  try {
-    const { tran_id } = req.body;
+  const tran_id = req.body?.tran_id || req.query.tran_id || "";
 
-    console.log("Payment cancelled callback received:", { tran_id });
+  console.log("Payment cancelled callback received:", { tran_id });
 
-    // 🔐 SECURITY FIX: Removed database update logic.
-    // Prevents unverified client-side attempts to manipulate transaction state.
-
-    // Redirect to frontend with cancellation message
-    return res.redirect(
-      `${FRONTEND_URL}/payment/cancelled?transactionId=${tran_id || ""}`,
+  // Fire-and-forget: check if this cancellation completes a cycle
+  if (tran_id) {
+    recordFailedCycleIfNeeded(tran_id).catch((err) =>
+      console.error("paymentCancel: recordFailedCycleIfNeeded error:", err.message)
     );
-  } catch (error) {
-    console.error("paymentCancel error:", error);
-    return res.redirect(`${FRONTEND_URL}/payment/error?message=Server error`);
   }
+
+  return res.redirect(
+    `${FRONTEND_URL}/payment/cancelled?transactionId=${tran_id}`,
+  );
 }
 
 // ============================================================================
@@ -379,87 +550,11 @@ async function paymentIPN(req, res) {
       return res.status(400).json({ message: "Invalid IPN payload" });
     }
 
-    const paymentsCol = await paymentsCollection();
-    const payment = await paymentsCol.findOne({ transactionId: tran_id });
+    const verification = await verifyAndCompletePayment(tran_id, val_id);
 
-    if (!payment) {
-      console.error("IPN for unknown transaction:", tran_id);
-      return res.status(404).json({ message: "Payment not found" });
+    if (!verification.success) {
+      return res.status(verification.status).json({ message: verification.message });
     }
-
-    // --------------------------------------------------------
-    // 🔐 ALWAYS validate with SSLCommerz
-    // --------------------------------------------------------
-    const sslcz = new SSLCommerzPayment(store_id, store_passwd, is_live);
-    const validateResponse = await sslcz.validate({ val_id });
-
-    console.log("Validation response:", validateResponse);
-
-    if (
-      validateResponse.status !== "VALID" &&
-      validateResponse.status !== "VALIDATED"
-    ) {
-      console.error("Validation failed:", validateResponse);
-      return res.status(400).json({ message: "Invalid payment" });
-    }
-
-    // --------------------------------------------------------
-    // 🔐 Cross-check critical fields
-    // --------------------------------------------------------
-    if (validateResponse.tran_id !== tran_id) {
-      console.error("Transaction ID mismatch", {
-        ipn: tran_id,
-        validate: validateResponse.tran_id,
-      });
-      return res.status(400).json({ message: "Transaction mismatch" });
-    }
-
-    if (Number(validateResponse.amount) !== Number(payment.amount)) {
-      console.error("Amount mismatch", {
-        expected: payment.amount,
-        got: validateResponse.amount,
-      });
-      return res.status(400).json({ message: "Amount mismatch" });
-    }
-
-    // --------------------------------------------------------
-    // 🔒 ATOMIC idempotent update (PENDING → COMPLETED)
-    // --------------------------------------------------------
-    const result = await paymentsCol.updateOne(
-      { transactionId: tran_id, status: "pending" },
-      {
-        $set: {
-          status: "completed",
-          validationId: val_id,
-          gatewayTransactionId: validateResponse.bank_tran_id,
-          sslResponse: validateResponse,
-          updatedAt: new Date(),
-        },
-      },
-    );
-
-    if (result.matchedCount === 0) {
-      // Already processed — SAFE idempotent exit
-      console.log(`Payment ${tran_id} already processed`);
-      return res.status(200).json({ message: "Already processed" });
-    }
-
-    // --------------------------------------------------------
-    // ✅ SIDE EFFECTS — RUN ONCE ONLY
-    // --------------------------------------------------------
-    const interestsCol = await interestsCollection();
-    await interestsCol.updateOne(
-      { _id: payment.interestId },
-      {
-        $set: {
-          paymentStatus: "paid",
-          transactionId: tran_id,
-          updatedAt: new Date(),
-        },
-      },
-    );
-
-    console.log(`Payment ${tran_id} COMPLETED via IPN`);
 
     return res.status(200).json({ message: "IPN processed successfully" });
   } catch (error) {
